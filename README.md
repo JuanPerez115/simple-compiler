@@ -1,5 +1,4 @@
-# simple-copilador
-no description
+# README
 
   Comandos
 make: este comando es para inicar todos los procesos de compilación del programa
