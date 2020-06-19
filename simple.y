@@ -7,18 +7,19 @@
 		C Libraries, Symbol Table, Code Generator & other C code
 =========================================================================*/
 #include <stdio.h>	/* For I/O */
+#include <stdbool.h>
 #include <stdlib.h>	/* For malloc here and in symbol table */
 #include <string.h>	/* For strcmp in symbol table */
-#include "ST.h"		/* Symbol Table */
-#include "SM.h"		/* Stack Machine */
-#include "CG.h"		/* Code Generator */
+#include "ST.h"	/* Symbol Table */
+#include "SM.h"	/* Stack Machine */
+#include "CG.h"	/* Code Generator */
 #define YYDEBUG 1	/* For Debugging */
-int errors;			/* Error Count	*/
+int errors;		/* Error Count	*/
 
 /*-------------------------------------------------------------------------
 		The following support backpatching
 -------------------------------------------------------------------------*/
-struct lbs 			/* Labels for data, if and while */
+struct lbs 		/* Labels for data, if and while */
 {
 	int for_goto;
 	int for_jmp_false;
@@ -61,9 +62,11 @@ context_check( enum code_ops operation, char *sym_name ){
 		SEMANTIC RECORDS
 =========================================================================*/
 %}
-%union semrec		/* The Semantic Records */
+%union semrec	/* The Semantic Records */
 {
 	int intval;		/* Integer values */
+	float floatval;
+	bool boolval;
 	char *id;		/* Identifiers */
 	struct lbs *lbls;	/* For backpatching	*/
 }
@@ -72,11 +75,13 @@ context_check( enum code_ops operation, char *sym_name ){
 		TOKENS
 =========================================================================*/
 %start program
-%token <intval> NUMBER	/* Simple integer */
-%token <id>	IDENTIFIER 	/* Simple identifier */
+%token <intval> INUMBER	/* Simple integer */
+%token <floatval> FNUMBER
+%token <boolval> TRUE FALSE
+%token <id> IDENTIFIER 	/* Simple identifier */
 %token <lbls> IF WHILE 	/* For backpatching labels */
 %token SKIP THEN ELSE FI DO END
-%token INTEGER READ WRITE LET IN
+%token INTEGER FLOAT READ WRITE LET IN
 %token ASSGNOP
 
 /*=========================================================================
@@ -90,51 +95,53 @@ context_check( enum code_ops operation, char *sym_name ){
 		GRAMMAR RULES for the Simple language
 =========================================================================*/
 %%
-program : 	LET
-				declarations
-			IN 	{ gen_code( DATA, data_location() - 1 ); }
-				commands
-			END { gen_code( HALT, 0 ); YYACCEPT; }
+program: LET
+		declarations
+	 IN { gen_code( DATA, data_location() - 1 ); }
+		commands
+	 END { gen_code( HALT, 0 ); YYACCEPT; }
 ;
 
-declarations : /* empty */
+declarations: /* empty */
 	| INTEGER id_seq IDENTIFIER '.' { install( $3 ); }
+	| FLOAT id_seq IDENTIFIER '.' { install( $3 ); }
 ;
 
-id_seq : /* empty */
+id_seq: /* empty */
 	| id_seq IDENTIFIER ',' { install( $2 ); }
 ;
 
-commands : /* empty */
+commands: /* empty */
 	| commands command ';'
 ;
 
-command : SKIP
+command:  SKIP
 	| READ IDENTIFIER { context_check( READ_INT, $2 ); }
 	| WRITE exp { gen_code( WRITE_INT, 0 ); }
 	| IDENTIFIER ASSGNOP exp { context_check( STORE, $1 ); }
 
-	| IF exp 		{ $1 = (struct lbs *) newlblrec();
-					  $1->for_jmp_false = reserve_loc(); }
+	| IF exp { $1 = (struct lbs *) newlblrec();
+			$1->for_jmp_false = reserve_loc(); }
 	  THEN commands { $1->for_goto = reserve_loc(); }
-	  ELSE 			{ back_patch( $1->for_jmp_false,
-								  JMP_FALSE,
-								  gen_label() ); }
+	  ELSE { back_patch( $1->for_jmp_false,
+				JMP_FALSE,
+				gen_label() ); }
 		   commands
-	  FI 			{ back_patch( $1->for_goto, GOTO, gen_label() ); }
+	  FI { back_patch( $1->for_goto, GOTO, gen_label() ); }
 
-	| WHILE 		{ $1 = (struct lbs *) newlblrec();
-					  $1->for_goto = gen_label(); }
-		   exp 		{ $1->for_jmp_false = reserve_loc(); }
+	| WHILE { $1 = (struct lbs *) newlblrec();
+			$1->for_goto = gen_label(); }
+		   exp { $1->for_jmp_false = reserve_loc(); }
 	  DO
 		   commands
-	  END 			{ gen_code( GOTO, $1->for_goto );
-					  back_patch( $1->for_jmp_false,
-								  JMP_FALSE,
-								  gen_label() ); }
+	  END { gen_code( GOTO, $1->for_goto );
+		back_patch( $1->for_jmp_false,
+				JMP_FALSE,
+				gen_label() ); }
 ;
 
-exp : NUMBER 		{ gen_code( LD_INT, $1 ); }
+exp : INUMBER 		{ gen_code( LD_INT, $1 ); }
+	| FNUMBER 		{ gen_code( LD_FLOAT, $1 ); }
 	| IDENTIFIER 	{ context_check( LD_VAR, $1 ); }
 	| exp '<' exp 	{ gen_code( LT, 0 ); }
 	| exp '=' exp 	{ gen_code( EQ, 0 ); }
@@ -145,6 +152,8 @@ exp : NUMBER 		{ gen_code( LD_INT, $1 ); }
 	| exp '/' exp 	{ gen_code( DIV, 0 ); }
 	| exp '^' exp 	{ gen_code( PWR, 0 ); }
 	| '(' exp ')'
+	| TRUE			{ gen_code( LD_INT, $1 ); }
+	| FALSE 		{ gen_code( LD_INT, $1 ); }
 ;
 %%
 
